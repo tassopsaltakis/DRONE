@@ -19,7 +19,7 @@
 
 To install dependencies, run:
 
-```
+```bash
 pip install scapy colorama
 ```
 
@@ -68,15 +68,38 @@ python drone.py --ip <target IP or domain> [options]
 
 1. **Basic Port Scan**:
    ```bash
-   python drone.py --ip 192.168.1.1
+   python drone.py --ip <target IP or domain>
    ```
 
 2. **Port Scan with OS Fingerprinting**:
    ```bash
-   python drone.py --ip example.com --os-scan
+   python drone.py --ip <target IP or domain>
    ```
 
 3. **Port Scan for Specific Range**:
    ```bash
-   python drone.py --ip 192.168.1.1 --start-port 100 --end-port 1000
+   python drone.py --ip <target IP or domain> --start-port 100 --end-port 1000
+   ```
+
+## Usage for EXE
+
+If you've compiled the script into an executable (`drone.exe`), you can use it in the same way as the Python script.
+
+Make sure to reference the executable using `./` or `.\` for PowerShell on Windows.
+
+### Examples
+
+1. **Basic Port Scan (EXE)**:
+   ```bash
+   .\drone.exe --ip <target IP or domain>
+   ```
+
+2. **Port Scan with OS Fingerprinting (EXE)**:
+   ```bash
+   .\drone.exe --ip <target IP or domain> --os-scan
+   ```
+
+3. **Port Scan for Specific Range (EXE)**:
+   ```bash
+   .\drone.exe --ip <target IP or domain> --start-port 100 --end-port 1000
    ```

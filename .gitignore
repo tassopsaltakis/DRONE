@@ -1,2 +1,7 @@
 
 /.idea
+/drone.build/
+/drone.dist/
+/drone.onefile-build/
+/dronev0_1.exe
+/drone.exe
