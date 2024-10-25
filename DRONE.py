@@ -13,6 +13,8 @@ from pathlib import Path  # For cross-platform Documents folder access
 import datetime  # For timestamped log files
 import ctypes  # For accessing Windows folders
 from ctypes import wintypes
+import time  # For timing functionality
+import ipaddress  # For IP range handling
 
 # Initialize colorama to enable colored output on Windows
 init(autoreset=True)
@@ -40,7 +42,7 @@ class ColoredArgumentParser(argparse.ArgumentParser):
         help_text += f"  {Fore.GREEN}drone.py [-h] --ip IP [--start-port START_PORT] [--end-port END_PORT] [--os-scan] [--timeout TIMEOUT] [--port-list PORT_LIST] [--log-file]{Style.RESET_ALL}\n\n"
         help_text += f"{Fore.YELLOW}Optional arguments:{Style.RESET_ALL}\n"
         help_text += f"  {Fore.GREEN}-h, --help{Style.RESET_ALL}            {Fore.CYAN}Show this help message and exit{Style.RESET_ALL}\n"
-        help_text += f"  {Fore.GREEN}--ip IP{Style.RESET_ALL}               {Fore.CYAN}Specify the target IP address or domain name{Style.RESET_ALL}\n"
+        help_text += f"  {Fore.GREEN}--ip IP{Style.RESET_ALL}               {Fore.CYAN}Specify the target IP address, domain name, or CIDR notation (e.g., 192.168.7.0/24){Style.RESET_ALL}\n"
         help_text += f"  {Fore.GREEN}--start-port START_PORT{Style.RESET_ALL} {Fore.CYAN}Specify the start port for scanning (default 1){Style.RESET_ALL}\n"
         help_text += f"  {Fore.GREEN}--end-port END_PORT{Style.RESET_ALL}   {Fore.CYAN}Specify the end port for scanning (default 1024){Style.RESET_ALL}\n"
         help_text += f"  {Fore.GREEN}--os-scan{Style.RESET_ALL}             {Fore.CYAN}Perform OS fingerprinting scan{Style.RESET_ALL}\n"
@@ -90,7 +92,7 @@ async def scan_port(ip, port, open_ports, timeout):
     except (asyncio.TimeoutError, ConnectionRefusedError):
         pass  # Ignore closed/unresponsive ports
     except Exception as e:
-        print_output(f"{Fore.RED}Error scanning port {port}: {str(e)}{Style.RESET_ALL}")
+        print_output(f"{Fore.RED}Error scanning port {port} on {ip}: {str(e)}{Style.RESET_ALL}")
     finally:
         sock.close()  # Ensure the socket is closed in case of any error
 
@@ -118,7 +120,7 @@ def os_fingerprint(ip):
         return f"{Fore.RED}Unable to fingerprint OS: {str(e)}{Style.RESET_ALL}"
 
 # Function to check open ports against the JSON port list and display nicely formatted results
-def display_results(open_ports, port_list):
+def display_results(ip, open_ports, port_list):
     if open_ports:
         for port in open_ports:
             port_info_list = port_list.get(str(port), None)
@@ -132,16 +134,16 @@ def display_results(open_ports, port_list):
                 udp_support = "Yes" if port_info.get('udp', False) else "No"
 
                 # Print nicely formatted output with color
-                print_output(f"{Fore.GREEN}Port {port}{Style.RESET_ALL}")
+                print_output(f"{Fore.GREEN}Port {port} on {ip}{Style.RESET_ALL}")
                 print_output(f"{Fore.CYAN}  Description: {description}{Style.RESET_ALL}")
                 print_output(f"{Fore.CYAN}  Status: {status}{Style.RESET_ALL}")
                 print_output(f"{Fore.CYAN}  TCP Support: {tcp_support}{Style.RESET_ALL}")
                 print_output(f"{Fore.CYAN}  UDP Support: {udp_support}{Style.RESET_ALL}")
             else:
                 # If no info in JSON, fallback to "Unknown service"
-                print_output(f"{Fore.GREEN}Port {port}: Unknown service (not in JSON){Style.RESET_ALL}")
+                print_output(f"{Fore.GREEN}Port {port} on {ip}: Unknown service (not in JSON){Style.RESET_ALL}")
     else:
-        print_output(f"{Fore.GREEN}No open ports found.{Style.RESET_ALL}")
+        print_output(f"{Fore.GREEN}No open ports found on {ip}.{Style.RESET_ALL}")
 
 # Function to perform a scan across a range of ports asynchronously
 async def perform_scan(ip, start_port, end_port, os_scan, timeout, port_list):
@@ -151,7 +153,7 @@ async def perform_scan(ip, start_port, end_port, os_scan, timeout, port_list):
     # Perform OS fingerprinting if requested
     if os_scan:
         os_result = os_fingerprint(ip)
-        print_output(f"OS Fingerprint: {os_result}")
+        print_output(f"OS Fingerprint for {ip}: {os_result}")
 
     # Create tasks for each port scan and run them concurrently
     tasks = [
@@ -161,27 +163,39 @@ async def perform_scan(ip, start_port, end_port, os_scan, timeout, port_list):
     await asyncio.gather(*tasks)
 
     # Now display the results based on open ports found and JSON data
-    display_results(open_ports, port_list)
+    display_results(ip, open_ports, port_list)
 
     # Inform the user that all other ports are closed
-    print_output(f"{Fore.YELLOW}All other ports in the range {start_port}-{end_port} are closed.{Style.RESET_ALL}")
-    print_output(f"{Fore.GREEN}Scan completed.{Style.RESET_ALL}")
+    print_output(f"{Fore.YELLOW}All other ports in the range {start_port}-{end_port} are closed on {ip}.{Style.RESET_ALL}")
+    print_output(f"{Fore.GREEN}Scan completed for {ip}.{Style.RESET_ALL}")
 
-# Function to resolve domain names to IP addresses
+# Function to resolve domain names to IP addresses or parse CIDR notation
 def resolve_domain(ip_or_domain):
+    # Check if input is a CIDR notation
+    try:
+        network = ipaddress.ip_network(ip_or_domain, strict=False)
+        return [str(ip) for ip in network.hosts()]  # Return list of IPs in the subnet
+    except ValueError:
+        pass  # Not a CIDR notation, proceed to check for IP or domain
+
+    # Check if input is an IP address
     try:
         socket.inet_aton(ip_or_domain)
-        return ip_or_domain  # Already an IP
+        return [ip_or_domain]  # Return as a list
     except socket.error:
-        try:
-            return socket.gethostbyname(ip_or_domain)  # Resolves domain to IP
-        except socket.gaierror:
-            raise ValueError(f"{Fore.RED}Invalid IP address or domain name.{Style.RESET_ALL}")
+        pass  # Not a valid IP address, proceed to resolve domain
+
+    # Try to resolve as a domain name
+    try:
+        ip = socket.gethostbyname(ip_or_domain)  # Resolves domain to IP
+        return [ip]  # Return as a list
+    except socket.gaierror:
+        raise ValueError(f"{Fore.RED}Invalid IP address, domain name, or CIDR notation: {ip_or_domain}{Style.RESET_ALL}")
 
 # Command-line argument parsing
 def parse_args():
     parser = ColoredArgumentParser(description="DRONE - Advanced Python Network Scanner")
-    parser.add_argument('--ip', type=str, required=True, help="Specify the target IP address or domain name.")
+    parser.add_argument('--ip', type=str, required=True, help="Specify the target IP address, domain name, or CIDR notation (e.g., 192.168.7.0/24).")
     parser.add_argument('--start-port', type=int, default=1, help="Specify the start port for scanning (default 1).")
     parser.add_argument('--end-port', type=int, default=1024, help="Specify the end port for scanning (default 1024).")
     parser.add_argument('--os-scan', action='store_true', help="Perform OS fingerprinting scan.")
@@ -214,15 +228,40 @@ if __name__ == "__main__":
             print(f"{Fore.GREEN}Logging to file: {log_file_path}{Style.RESET_ALL}")
 
     try:
-        ip = resolve_domain(args.ip)
+        ip_list = resolve_domain(args.ip)
     except ValueError as e:
         print_output(str(e))
         if output_file:
             output_file.close()
         sys.exit(1)
 
-    # Run the scan asynchronously
-    asyncio.run(perform_scan(ip, args.start_port, args.end_port, args.os_scan, args.timeout, port_list))
+    # Record the start time
+    start_time = time.time()
+
+    # Loop over each IP address and perform the scan
+    total_ips = len(ip_list)
+    for idx, ip in enumerate(ip_list, 1):
+        print_output(f"{Fore.MAGENTA}Scanning IP ({idx}/{total_ips}): {ip}{Style.RESET_ALL}")
+        asyncio.run(perform_scan(ip, args.start_port, args.end_port, args.os_scan, args.timeout, port_list))
+
+    # Record the end time
+    end_time = time.time()
+
+    # Calculate the total duration
+    total_time = end_time - start_time
+
+    # Format the duration into hours, minutes, and seconds
+    hours, rem = divmod(total_time, 3600)
+    minutes, seconds = divmod(rem, 60)
+    time_taken = ""
+    if hours > 0:
+        time_taken += f"{int(hours)}h "
+    if minutes > 0 or hours > 0:
+        time_taken += f"{int(minutes)}m "
+    time_taken += f"{seconds:.2f}s"
+
+    # Display the total time taken
+    print_output(f"{Fore.BLUE}Total time taken: {time_taken}{Style.RESET_ALL}")
 
     # Close the log file if it was opened
     if output_file:
